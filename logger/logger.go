@@ -1,35 +1,31 @@
 package logger
 
 import (
-	"context"
 	"fmt"
-	ctxpkg "github.com/x893675/gopkg/ctx"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"os"
 	"time"
 )
 
-const (
-	TraceIDKey   = "trace_id"
-	UserIDKey    = "user_id"
-	RequestIDKey = "request_id"
-	StackKey     = "stack"
-)
-
 var (
-	logger *zap.Logger
+	logger *zapLogger
 )
 
 func init() {
-	logger, _ = zap.NewProduction(zap.AddCallerSkip(1))
+	l, _ := zap.NewProduction(zap.AddCallerSkip(1))
+	logger = &zapLogger{l: l}
 }
 
-func Logger() *zap.Logger {
-	return logger
+// zapLogger is a logr.Logger that uses Zap to record log.
+type zapLogger struct {
+	// NB: this looks very similar to zap.SugaredLogger, but
+	// deals with our desire to have multiple verbosity levels.
+	l   *zap.Logger
+	lvl int
 }
 
-func NewLogger(opt *Options) {
+func NewLoggerWithOptions(opt *Options) {
 	var level zapcore.Level
 	switch opt.Level {
 	case "debug":
@@ -50,19 +46,20 @@ func NewLogger(opt *Options) {
 	case "stderr":
 		fallthrough
 	default:
-		syncer = zapcore.NewMultiWriteSyncer(os.Stdout)
+		syncer = zapcore.NewMultiWriteSyncer(os.Stderr)
 	}
 	core := zapcore.NewCore(
 		newDefaultProductionLogEncoder(true, opt.Encode),
 		syncer,
 		level,
 	)
-	logger = zap.New(core)
+	l := zap.New(core)
 	if level == zapcore.DebugLevel {
 		// caller skip set 1
 		// 使得DEBUG模式下caller的值为调用当前package的代码路径
-		logger = logger.WithOptions(zap.AddCaller(), zap.AddCallerSkip(1))
+		l = l.WithOptions(zap.AddCaller(), zap.AddCallerSkip(1))
 	}
+	logger = &zapLogger{l: l}
 }
 
 func newDefaultProductionLogEncoder(colorize bool, encodeType string) zapcore.Encoder {
@@ -82,54 +79,45 @@ func newDefaultProductionLogEncoder(colorize bool, encodeType string) zapcore.En
 }
 
 func Enabled(l zapcore.Level) bool {
-	return logger.Core().Enabled(l)
+	return logger.l.Core().Enabled(l)
 }
 
-func Info(ctx context.Context, msg string, fields ...zap.Field) {
-	f := ExtraContext(ctx)
-	logger.Info(msg, append(fields, f...)...)
+func Info(msg string, fields ...zap.Field) {
+	logger.l.Info(msg, fields...)
 }
 
-func Debug(ctx context.Context, msg string, fields ...zap.Field) {
-	f := ExtraContext(ctx)
-	logger.Debug(msg, append(fields, f...)...)
+func Debug(msg string, fields ...zap.Field) {
+	logger.l.Debug(msg, fields...)
 }
 
-func Warn(ctx context.Context, msg string, fields ...zap.Field) {
-	f := ExtraContext(ctx)
-	logger.Warn(msg, append(fields, f...)...)
+func Warn(msg string, fields ...zap.Field) {
+	logger.l.Warn(msg, fields...)
 }
 
-func Error(ctx context.Context, msg string, fields ...zap.Field) {
-	f := ExtraContext(ctx)
-	logger.Error(msg, append(fields, f...)...)
+func Error(msg string, fields ...zap.Field) {
+	logger.l.Error(msg, fields...)
 }
 
-func Fatal(ctx context.Context, msg string, fields ...zap.Field) {
-	f := ExtraContext(ctx)
-	logger.Fatal(msg, append(fields, f...)...)
-}
-
-func ExtraContext(ctx context.Context) []zap.Field {
-	if ctx == nil {
-		return nil
-	}
-	var fields []zap.Field
-	if v := ctxpkg.FromTraceIDContext(ctx); v != "" {
-		fields = append(fields, zap.String(TraceIDKey, v))
-	}
-	if v := ctxpkg.FromUserIDContext(ctx); v != "" {
-		fields = append(fields, zap.String(UserIDKey, v))
-	}
-	if v := ctxpkg.FromRequestIDContext(ctx); v != "" {
-		fields = append(fields, zap.String(RequestIDKey, v))
-	}
-	if v := ctxpkg.FromStackContext(ctx); v != nil {
-		fields = append(fields, zap.String(StackKey, fmt.Sprintf("%+v", v)))
-	}
-	return fields
+func Fatal(msg string, fields ...zap.Field) {
+	logger.l.Fatal(msg, fields...)
 }
 
 func Infof(format string, args ...interface{}) {
-	logger.Info(fmt.Sprintf(format, args...))
+	logger.l.Info(fmt.Sprintf(format, args...))
+}
+
+func Debugf(format string, args ...interface{}) {
+	logger.l.Debug(fmt.Sprintf(format, args...))
+}
+
+func Warnf(format string, args ...interface{}) {
+	logger.l.Warn(fmt.Sprintf(format, args...))
+}
+
+func Errorf(format string, args ...interface{}) {
+	logger.l.Error(fmt.Sprintf(format, args...))
+}
+
+func Fatalf(format string, args ...interface{}) {
+	logger.l.Fatal(fmt.Sprintf(format, args...))
 }

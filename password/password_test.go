@@ -27,7 +27,6 @@ func BenchmarkTestBlock(b *testing.B) {
 	}
 }
 
-
 func GeneratePassword1(pw string) (string, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(pw), cost)
 	if err != nil {
