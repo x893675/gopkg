@@ -1,32 +1,32 @@
 package password
 
 import (
-	"github.com/x893675/gopkg/stringplus"
 	"golang.org/x/crypto/bcrypt"
 )
 
-var cost int
+type CostFunc func() int
 
-func init() {
-	cost = bcrypt.DefaultCost
+type Cipher struct {
+	cost CostFunc
 }
 
-func SetCost(c int) {
-	if c < bcrypt.MinCost || c > bcrypt.MaxCost {
-		cost = bcrypt.DefaultCost
-	} else {
-		cost = c
+func NewCipher(fn CostFunc) *Cipher {
+	if fn == nil {
+		fn = func() int {
+			return bcrypt.MinCost
+		}
 	}
+	return &Cipher{cost: fn}
 }
 
-func GeneratePassword(pw string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword(stringplus.String2bytes(pw), cost)
+func (c *Cipher) EncryptPassword(pw string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(pw), c.cost())
 	if err != nil {
 		return "", err
 	}
-	return stringplus.Bytes2string(hash), nil
+	return string(hash), nil
 }
 
-func ComparePassword(encodePw, password string) error {
-	return bcrypt.CompareHashAndPassword(stringplus.String2bytes(encodePw), stringplus.String2bytes(password))
+func (c *Cipher) ComparePassword(encodePassword, password string) error {
+	return bcrypt.CompareHashAndPassword([]byte(encodePassword), []byte(password))
 }
