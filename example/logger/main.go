@@ -1,16 +1,21 @@
 package main
 
 import (
+	"flag"
+
 	"github.com/x893675/gopkg/logger"
 	"go.uber.org/zap"
 )
 
 func main() {
-	logger.NewLoggerWithOptions(&logger.Options{
-		Level:  "debug",
-		Output: "stderr",
-		Encode: "raw",
-	})
+	// logger.NewLoggerWithOptions(&logger.Options{
+	// 	Level:  "debug",
+	// 	Output: "stderr",
+	// 	Encode: "json",
+	// })
+	logger.InitFlags(nil)
+	flag.Parse()
+	logger.InitLogger()
 	logger.Debug("hello world", zap.String("request_id", "1234567"))
 	logger.Debugf("hello world, request_id=%s", "1234567")
 
