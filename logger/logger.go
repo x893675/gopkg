@@ -28,7 +28,26 @@ type loggingT struct {
 	// logFile will be cleaned up. If this value is 0, no size limitation will be applied to logFile.
 	logFileMaxSizeMB int
 
-	flushInterval time.Duration
+	// MaxBackups is the maximum number of old log files to retain.  The default
+	// is to retain all old log files (though MaxAge may still cause them to get
+	// deleted.)
+	maxBackups int
+
+	// MaxAge is the maximum number of days to retain old log files based on the
+	// timestamp encoded in their filename.  Note that a day is defined as 24
+	// hours and may not exactly correspond to calendar days due to daylight
+	// savings, leap seconds, etc. The default is not to remove old log files
+	// based on age.
+	maxAge int
+
+	// Compress determines if the rotated log files should be compressed
+	// using gzip. The default is not to perform compression.
+	compress bool
+
+	// LocalTime determines if the time used for formatting the timestamps in
+	// backup files is the computer's local time.  The default is to use UTC
+	// time.
+	useLocalTimeBack bool
 
 	// log level, debug,info,error
 	Level zapcore.Level
@@ -43,6 +62,9 @@ type loggingT struct {
 	// NB: this looks very similar to zap.SugaredLogger, but
 	// deals with our desire to have multiple verbosity levels.
 	l *zap.Logger
+
+	// log filter
+	filter LogFilter
 }
 
 func (l *loggingT) ApplyZapLogger() {
@@ -52,10 +74,10 @@ func (l *loggingT) ApplyZapLogger() {
 		lumberJackLogger := &lumberjack.Logger{
 			Filename:   l.logFile,
 			MaxSize:    l.logFileMaxSizeMB,
-			MaxBackups: 5,
-			MaxAge:     30,
-			Compress:   false,
-			LocalTime:  true,
+			MaxBackups: l.maxBackups,
+			MaxAge:     l.maxAge,
+			Compress:   l.compress,
+			LocalTime:  l.useLocalTimeBack,
 		}
 		multiWriteSyncer = append(multiWriteSyncer, zapcore.Lock(zapcore.AddSync(lumberJackLogger)))
 	} else {
@@ -66,14 +88,14 @@ func (l *loggingT) ApplyZapLogger() {
 		multiWriteSyncer = append(multiWriteSyncer, os.Stderr)
 	}
 
-	core := zapcore.NewCore(newDefaultProductionLogEncoder(true, l.encodeType),
+	core := zapcore.NewCore(newDefaultProductionLogEncoder(l.encodeType),
 		zapcore.NewMultiWriteSyncer(multiWriteSyncer...),
 		l.Level)
 	zl := zap.New(core)
 	if l.Level == zapcore.DebugLevel {
 		// caller skip set 1
 		// 使得DEBUG模式下caller的值为调用当前package的代码路径
-		zl = zl.WithOptions(zap.AddCaller(), zap.AddCallerSkip(1))
+		zl = zl.WithOptions(zap.AddCaller(), zap.AddCallerSkip(1), zap.AddStacktrace(zapcore.ErrorLevel))
 	}
 	l.l = zl
 }
@@ -89,6 +111,13 @@ func (l *loggingT) flushAll() {
 	_ = l.l.Sync()
 }
 
+// LogFilter is a collection of functions that can filter all logging calls,
+// e.g. for sanitization of arguments and prevent accidental leaking of secrets.
+type LogFilter interface {
+	Filter(args []interface{}) []interface{}
+	FilterF(format string, args []interface{}) (string, []interface{})
+}
+
 func ApplyLogger() {
 	_logging.mu.Lock()
 	defer _logging.mu.Unlock()
@@ -102,14 +131,16 @@ func defaultLoggingT() *loggingT {
 		logFile:          "",
 		logFileMaxSizeMB: 100,
 		Level:            zapcore.InfoLevel,
-		flushInterval:    5 * time.Second,
 		encodeType:       ConsoleEncode,
+		maxAge:           30,
+		maxBackups:       5,
+		compress:         false,
+		useLocalTimeBack: true,
 	}
-	//l.ApplyZapLogger()
 	return l
 }
 
-func newDefaultProductionLogEncoder(colorize bool, encodeType EncodeType) zapcore.Encoder {
+func newDefaultProductionLogEncoder(encodeType EncodeType) zapcore.Encoder {
 	encCfg := zap.NewProductionEncoderConfig()
 	encCfg.EncodeTime = func(ts time.Time, encoder zapcore.PrimitiveArrayEncoder) {
 		encoder.AppendString(ts.Format("2006-01-02T15:04:05Z07:00"))
@@ -146,25 +177,46 @@ func Fatal(msg string, fields ...zap.Field) {
 }
 
 func Infof(format string, args ...interface{}) {
+	if _logging.filter != nil {
+		format, args = _logging.filter.FilterF(format, args)
+	}
 	_logging.l.Info(fmt.Sprintf(format, args...))
 }
 
 func Debugf(format string, args ...interface{}) {
+	if _logging.filter != nil {
+		format, args = _logging.filter.FilterF(format, args)
+	}
 	_logging.l.Debug(fmt.Sprintf(format, args...))
 }
 
 func Warnf(format string, args ...interface{}) {
+	if _logging.filter != nil {
+		format, args = _logging.filter.FilterF(format, args)
+	}
 	_logging.l.Warn(fmt.Sprintf(format, args...))
 }
 
 func Errorf(format string, args ...interface{}) {
+	if _logging.filter != nil {
+		format, args = _logging.filter.FilterF(format, args)
+	}
 	_logging.l.Error(fmt.Sprintf(format, args...))
 }
 
 func Fatalf(format string, args ...interface{}) {
+	if _logging.filter != nil {
+		format, args = _logging.filter.FilterF(format, args)
+	}
 	_logging.l.Fatal(fmt.Sprintf(format, args...))
 }
 
 func FlushLogs() {
 	_logging.lockAndFlushAll()
+}
+
+func SetFilter(filter LogFilter) {
+	_logging.mu.Lock()
+	defer _logging.mu.Unlock()
+	_logging.filter = filter
 }
